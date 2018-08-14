@@ -14,6 +14,58 @@
 }(this, function (jDataView, jBinary, MP4, H264, PES, ADTS) {
 	'use strict';
 
+
+	/**
+	 * Copied from mux.js => https://github.com/videojs/mux.js/blob/957441d44307a47d801af3db5c51072ed241f8c2/lib/codecs/h264.js#L266
+	 * Expunge any "Emulation Prevention" bytes from a "Raw Byte
+	 * Sequence Payload"
+	 * @param data {Uint8Array} the bytes of a RBSP from a NAL
+	 * unit
+	 * @return {Uint8Array} the RBSP without any Emulation
+	 * Prevention Bytes
+	 */
+	var discardEmulationPreventionBytes = function(data) {
+		var
+		length = data.byteLength,
+		emulationPreventionBytesPositions = [],
+		i = 0,
+		newLength, newData;
+
+		// Find all `Emulation Prevention Bytes`
+		while (i < length - 2) {
+		if (data[i] === 0 && data[i + 1] === 0 && data[i + 2] === 0x03) {
+			emulationPreventionBytesPositions.push(i + 2);
+			i += 2;
+		} else {
+			i++;
+		}
+		}
+
+		// If no Emulation Prevention Bytes were found just return the original
+		// array
+		if (emulationPreventionBytesPositions.length === 0) {
+		return data;
+		}
+
+		// Create a new array to hold the NAL unit data
+		newLength = length - emulationPreventionBytesPositions.length;
+		newData = new Uint8Array(newLength);
+		var sourceIndex = 0;
+
+		for (i = 0; i < newLength; sourceIndex++, i++) {
+		if (sourceIndex === emulationPreventionBytesPositions[0]) {
+			// Skip this byte
+			sourceIndex++;
+			// Remove this position index
+			emulationPreventionBytesPositions.shift();
+		}
+		newData[i] = data[sourceIndex];
+		}
+
+		return newData;
+	};
+
+
 	return function (mpegts) {
 		var packets = mpegts.read('File');
 		
@@ -55,7 +107,9 @@
 						case 7:
 							if (!sps) {
 								var sps = nalUnit;
-								var spsInfo = new jBinary(sps, H264).read('SPS');
+								// remove Emulation Prevention Bytes to get correct width & height
+								// See http://blog.51cto.com/danielllf/1758115
+								var spsInfo = new jBinary(discardEmulationPreventionBytes(sps.subarray(1)), H264).read('SPS');
 								var width = (spsInfo.pic_width_in_mbs_minus_1 + 1) * 16;
 								var height = (2 - spsInfo.frame_mbs_only_flag) * (spsInfo.pic_height_in_map_units_minus_1 + 1) * 16;
 								var cropping = spsInfo.frame_cropping;
